@@ -20,6 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: provider,
     showCollapseAll: true,
   });
+  treeView.description = `v${context.extension.packageJSON.version}`;
   context.subscriptions.push(treeView);
 
   // ── Commands ──────────────────────────────────────────────────────
