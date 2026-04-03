@@ -87,7 +87,7 @@ export class DbProvider implements vscode.TreeDataProvider<DbTreeItem> {
         case 'schema':
           return this.getObjectGroupNodes(element.connectionId, element.label);
         case 'table-group':
-          return this.getTableNodes(element.connectionId, element.schema ?? 'public', 'BASE TABLE');
+          return this.getTableNodes(element.connectionId, element.schema ?? 'public', 'tables');
         case 'view-group':
           return this.getTableNodes(element.connectionId, element.schema ?? 'public', 'VIEW');
         case 'table':
@@ -191,16 +191,19 @@ export class DbProvider implements vscode.TreeDataProvider<DbTreeItem> {
   private async getTableNodes(
     connectionId: string,
     schema: string,
-    tableType: 'BASE TABLE' | 'VIEW'
+    kind: 'tables' | 'VIEW'
   ): Promise<DbTreeItem[]> {
-    const result = await this.connMgr.query(
-      connectionId,
-      `SELECT table_name FROM information_schema.tables
-       WHERE table_schema = $1 AND table_type = $2
-       ORDER BY table_name`,
-      [schema, tableType]
-    );
-    const nodeType: NodeType = tableType === 'VIEW' ? 'view' : 'table';
+    const sql =
+      kind === 'VIEW'
+        ? `SELECT table_name FROM information_schema.tables
+           WHERE table_schema = $1 AND table_type = 'VIEW'
+           ORDER BY table_name`
+        : `SELECT table_name FROM information_schema.tables
+           WHERE table_schema = $1
+             AND table_type IN ('BASE TABLE', 'FOREIGN TABLE', 'MATERIALIZED VIEW')
+           ORDER BY table_name`;
+    const result = await this.connMgr.query(connectionId, sql, [schema]);
+    const nodeType: NodeType = kind === 'VIEW' ? 'view' : 'table';
     return result.rows.map(
       row =>
         new DbTreeItem(
