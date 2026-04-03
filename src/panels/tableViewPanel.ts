@@ -208,8 +208,8 @@ interface WebviewMessage {
   pageSize?: number;
 }
 
-function getNonce(): string {
-  return [...Array(32)].map(() => Math.floor(Math.random() * 36).toString(36)).join('');
+function safeJson(obj: unknown): string {
+  return JSON.stringify(obj).replace(/<\//g, '<\\/');
 }
 
 function getLoadingHtml(schema: string, table: string): string {
@@ -228,16 +228,15 @@ function getTableHtml(
   initialRows: Record<string, unknown>[],
   initialTotal: number
 ): string {
-  const nonce = getNonce();
-  const colsJson = JSON.stringify(columns);
-  const rowsJson = JSON.stringify(initialRows);
+  const colsJson = safeJson(columns);
+  const rowsJson = safeJson(initialRows);
   const totalPages = Math.max(1, Math.ceil(initialTotal / state.pageSize));
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
 <title>${state.schema}.${state.table}</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -342,7 +341,7 @@ tr.sel td { background: var(--vscode-list-activeSelectionBackground) !important;
   </div>
 </div>
 
-<script nonce="${nonce}">
+<script>
 const vscode = acquireVsCodeApi();
 const COLS = ${colsJson};
 let rows = ${rowsJson};

@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -13,6 +13,7 @@
   },
   "categories": ["Other"],
   "activationEvents": [],
+  "license": "MIT",
   "icon": "resources/icon.png",
   "main": "./out/extension.js",
   "contributes": {
@@ -183,7 +184,8 @@
     "bundle:watch": "node esbuild.js --watch",
     "compile": "tsc --noEmit",
     "watch": "tsc --noEmit --watch",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "release": "node -e \"const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));const parts=p.version.split('.');parts[2]=+parts[2]+1;p.version=parts.join('.');fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n');console.log('Version: '+p.version);require('child_process').execSync('git add package.json && git commit -m \\\"Bump version to '+p.version+'\\\" && git tag v'+p.version+' && git push && git push --tags',{stdio:'inherit'});\""
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
