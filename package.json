@@ -4,6 +4,10 @@
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
   "version": "0.1.2",
   "publisher": "db-manager",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/piqab/db-manager"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

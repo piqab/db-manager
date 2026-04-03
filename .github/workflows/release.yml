@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - run: npm ci
 
@@ -24,7 +24,7 @@ jobs:
 
       - run: npm install -g @vscode/vsce
 
-      - run: vsce package --allow-missing-repository
+      - run: vsce package
 
       - name: Upload VSIX to Release
         uses: softprops/action-gh-release@v2
