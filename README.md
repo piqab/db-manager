@@ -45,17 +45,28 @@ Import modes: **Append** or **Truncate then import**.
 
 ## Installation
 
-### From VSIX
+### From GitHub Release (recommended)
+
+1. Go to the [Releases](../../releases) page
+2. Download `db-manager-*.vsix` from the latest release
+3. In VSCode: `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → select the file
+
+Or via terminal:
+
+```bash
+code --install-extension db-manager-0.1.1.vsix
+```
+
+### Build from source
 
 ```bash
 npm install
-npm run bundle
+npm run bundle -- --production
 npm install -g @vscode/vsce
 vsce package
-# Produces db-manager-0.1.0.vsix
 ```
 
-Then in VSCode: `Ctrl+Shift+P` → **Extensions: Install from VSIX...**
+Then install the produced `.vsix` as above.
 
 ### Development
 

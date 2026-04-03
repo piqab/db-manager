@@ -80,7 +80,7 @@ export class TableViewPanel {
         this.state.table
       );
       this.panel.webview.html = getTableHtml(this.panel.webview, this.context.extensionUri, this.state, this.columns);
-      await this.fetchData();
+      // fetchData() is called when the webview sends 'ready' — see handleMessage
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.panel.webview.html = getErrorHtml(msg);
@@ -117,6 +117,10 @@ export class TableViewPanel {
 
   private async handleMessage(msg: WebviewMessage): Promise<void> {
     switch (msg.type) {
+      case 'ready':
+        await this.fetchData();
+        break;
+
       case 'navigate':
         this.state.page = msg.page!;
         await this.fetchData();
@@ -224,7 +228,7 @@ function getPrimaryKeys(columns: ColumnInfo[], row: Record<string, unknown>): Re
 }
 
 interface WebviewMessage {
-  type: 'navigate' | 'sort' | 'filter' | 'updateRow' | 'insertRow' | 'deleteRow' | 'refresh' | 'changePageSize';
+  type: 'ready' | 'navigate' | 'sort' | 'filter' | 'updateRow' | 'insertRow' | 'deleteRow' | 'refresh' | 'changePageSize';
   page?: number;
   column?: string;
   filter?: string;
@@ -603,6 +607,9 @@ function getTableHtml(
     if (e.key === 'Escape') closeModal();
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { if (document.getElementById('modal').style.display !== 'none') saveModal(); }
   });
+
+  // Signal that the webview is ready to receive data
+  vscode.postMessage({ type: 'ready' });
 </script>
 </body>
 </html>`;
