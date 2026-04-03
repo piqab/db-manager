@@ -136,7 +136,7 @@ export class DbProvider implements vscode.TreeDataProvider<DbTreeItem> {
           db,
           vscode.TreeItemCollapsibleState.Collapsed,
           'database',
-          connectionId
+          `${connectionId}::${db}`
         )
     );
   }

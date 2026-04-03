@@ -34,27 +34,43 @@ export class ConnectionManager {
   }
 
   async removeConnection(id: string): Promise<void> {
-    await this.closePool(id);
+    // Close the main pool and all derived database-specific pools
+    for (const key of [...this.pools.keys()]) {
+      if (key === id || key.startsWith(`${id}::`)) {
+        await this.closePool(key);
+      }
+    }
     const connections = this.getConnections().filter(c => c.id !== id);
     await this.context.globalState.update(this.storageKey, connections);
   }
 
-  private getPool(config: ConnectionConfig): Pool {
-    let pool = this.pools.get(config.id);
-    if (!pool) {
-      pool = new Pool({
-        host: config.host,
-        port: config.port,
-        database: config.database,
-        user: config.user,
-        password: config.password,
-        ssl: config.ssl ? { rejectUnauthorized: false } : false,
-        max: 5,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-      });
-      this.pools.set(config.id, pool);
-    }
+  // connectionId may be "realId::database" for database-specific pools
+  private parseConnectionId(connectionId: string): { realId: string; database?: string } {
+    const idx = connectionId.indexOf('::');
+    if (idx === -1) return { realId: connectionId };
+    return { realId: connectionId.slice(0, idx), database: connectionId.slice(idx + 2) };
+  }
+
+  private getPool(connectionId: string): Pool {
+    let pool = this.pools.get(connectionId);
+    if (pool) return pool;
+
+    const { realId, database } = this.parseConnectionId(connectionId);
+    const config = this.getConnections().find(c => c.id === realId);
+    if (!config) throw new Error(`Connection ${realId} not found`);
+
+    pool = new Pool({
+      host: config.host,
+      port: config.port,
+      database: database ?? config.database,
+      user: config.user,
+      password: config.password,
+      ssl: config.ssl ? { rejectUnauthorized: false } : false,
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+    this.pools.set(connectionId, pool);
     return pool;
   }
 
@@ -77,11 +93,11 @@ export class ConnectionManager {
   }
 
   async query(connectionId: string, sql: string, params: unknown[] = []): Promise<QueryResult> {
-    const config = this.getConnections().find(c => c.id === connectionId);
-    if (!config) {
-      throw new Error(`Connection ${connectionId} not found`);
+    const { realId } = this.parseConnectionId(connectionId);
+    if (!this.getConnections().find(c => c.id === realId)) {
+      throw new Error(`Connection ${realId} not found`);
     }
-    const pool = this.getPool(config);
+    const pool = this.getPool(connectionId);
     const timeout = vscode.workspace.getConfiguration('dbManager').get<number>('queryTimeout', 30000);
     const client = await pool.connect();
     try {
@@ -93,11 +109,11 @@ export class ConnectionManager {
   }
 
   async withClient<T>(connectionId: string, fn: (client: PoolClient) => Promise<T>): Promise<T> {
-    const config = this.getConnections().find(c => c.id === connectionId);
-    if (!config) {
-      throw new Error(`Connection ${connectionId} not found`);
+    const { realId } = this.parseConnectionId(connectionId);
+    if (!this.getConnections().find(c => c.id === realId)) {
+      throw new Error(`Connection ${realId} not found`);
     }
-    const pool = this.getPool(config);
+    const pool = this.getPool(connectionId);
     const client = await pool.connect();
     try {
       return await fn(client);
