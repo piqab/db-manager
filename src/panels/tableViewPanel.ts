@@ -378,12 +378,12 @@ function renderAll() {
 }
 
 function renderHead() {
-  const si = col => col === orderBy ? (orderDir === 'ASC' ? ' &#8593;' : ' &#8595;') : ' <span style="opacity:.35">&#8645;</span>';
+  const si = col => col === orderBy ? (orderDir === 'ASC' ? ' &#8593;' : ' &#8595;') : ' <span style="opacity:.35">&#8645;<\/span>';
   document.getElementById('thead').innerHTML = '<tr>' +
     '<th class="rn">#</th>' +
     COLS.map(c => '<th onclick="sortBy(\'' + c.name + '\')" title="' + esc(c.type) + (c.is_primary?' PK':'') + '">' +
-      (c.is_primary ? '&#128273; ' : '') + esc(c.name) + si(c.name) + '</th>').join('') +
-    '<th class="act">Actions</th></tr>';
+      (c.is_primary ? '&#128273; ' : '') + esc(c.name) + si(c.name) + '<\/th>').join('') +
+    '<th class="act">Actions<\/th><\/tr>';
 }
 
 function renderBody() {
@@ -394,16 +394,16 @@ function renderBody() {
   const off = pg * pageSize;
   tbody.innerHTML = rows.map((r, i) =>
     '<tr onclick="selRow(this)">' +
-    '<td class="rn">' + (off+i+1) + '</td>' +
+    '<td class="rn">' + (off+i+1) + '<\/td>' +
     COLS.map(c => {
       const v = r[c.name];
       const isNull = v === null || v === undefined;
       return '<td class="' + (isNull?'null-val':'') + '" title="' + esc(String(v??'')) + '">' +
-        (isNull ? '<em>NULL</em>' : esc(String(v))) + '</td>';
+        (isNull ? '<em>NULL<\/em>' : esc(String(v))) + '<\/td>';
     }).join('') +
-    '<td class="act"><button class="rb" onclick="event.stopPropagation();editRow(' + i + ')">Edit</button>' +
-    '<button class="rb del" onclick="event.stopPropagation();delRow(' + i + ')" title="Delete">&#10005;</button></td>' +
-    '</tr>'
+    '<td class="act"><button class="rb" onclick="event.stopPropagation();editRow(' + i + ')">Edit<\/button>' +
+    '<button class="rb del" onclick="event.stopPropagation();delRow(' + i + ')" title="Delete">&#10005;<\/button><\/td>' +
+    '<\/tr>'
   ).join('');
   // store row data
   const trs = tbody.querySelectorAll('tr');
@@ -453,7 +453,7 @@ function buildFields(row, isInsert) {
     const v = row ? (row[c.name]===null||row[c.name]===undefined ? '' : String(row[c.name])) : '';
     const ro = c.is_primary && !isInsert;
     return '<label title="' + esc(c.type) + (c.is_primary?' PK':'') + '">' + (c.is_primary?'&#128273; ':'') + esc(c.name) +
-      '<br><small style="opacity:.6">' + esc(c.type) + '</small></label>' +
+      '<br><small style="opacity:.6">' + esc(c.type) + '<\/small><\/label>' +
       '<input id="f_' + c.name + '" value="' + escAttr(v) + '"' + (ro?' readonly':'') + ' placeholder="' + (c.nullable==='YES'?'NULL':'') + '">';
   }).join('');
 }
@@ -487,7 +487,7 @@ function escAttr(s) { return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39
 function showMsg(text, kind) {
   const a=document.getElementById('msgArea');
   if(!text) { a.innerHTML=''; return; }
-  a.innerHTML='<div class="msg ' + kind + '">' + esc(text) + '</div>';
+  a.innerHTML='<div class="msg ' + kind + '">' + esc(text) + '<\/div>';
   if(kind!=='error') setTimeout(()=>{a.innerHTML='';},4000);
 }
 
