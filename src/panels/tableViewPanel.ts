@@ -413,7 +413,7 @@ function renderBody() {
 
 function renderStatus() {
   const s = total === 0 ? 'No rows' : 'Rows ' + (pg*pageSize+1) + '\u2013' + Math.min((pg+1)*pageSize, total) + ' of ' + total.toLocaleString();
-  document.getElementById('sinfo').textContent = s;
+  document.getElementById('sinfo').textContent = s + '  [cols:' + COLS.length + ' rows[]:' + rows.length + ' total:' + total + ']';
   document.getElementById('pdisp').textContent = (pg+1) + ' / ' + (lastPg+1);
   document.getElementById('bFirst').disabled = pg === 0;
   document.getElementById('bPrev').disabled  = pg === 0;
