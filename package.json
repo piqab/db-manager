@@ -1,0 +1,194 @@
+{
+  "name": "db-manager",
+  "displayName": "DB Manager",
+  "description": "PostgreSQL database viewer, editor, import and export for VSCode",
+  "version": "0.1.0",
+  "publisher": "db-manager",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "icon": "resources/icon.png",
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "db-manager",
+          "title": "DB Manager",
+          "icon": "resources/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "db-manager": [
+        {
+          "id": "dbManagerConnections",
+          "name": "Connections"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dbManager.addConnection",
+        "title": "Add Connection",
+        "icon": "$(add)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.removeConnection",
+        "title": "Remove Connection",
+        "icon": "$(trash)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.refreshConnections",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.openTable",
+        "title": "Open Table",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.exportTable",
+        "title": "Export Table (CSV/JSON/SQL)",
+        "icon": "$(export)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.importTable",
+        "title": "Import into Table (CSV/JSON/SQL)",
+        "icon": "$(import)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.exportDatabase",
+        "title": "Export Database (SQL dump)",
+        "icon": "$(export)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.importDatabase",
+        "title": "Import Database (SQL dump)",
+        "icon": "$(import)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.openQueryEditor",
+        "title": "Open SQL Query Editor",
+        "icon": "$(terminal)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.truncateTable",
+        "title": "Truncate Table",
+        "icon": "$(clear-all)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.dropTable",
+        "title": "Drop Table",
+        "icon": "$(trash)",
+        "category": "DB Manager"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dbManager.addConnection",
+          "when": "view == dbManagerConnections",
+          "group": "navigation"
+        },
+        {
+          "command": "dbManager.refreshConnections",
+          "when": "view == dbManagerConnections",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dbManager.removeConnection",
+          "when": "view == dbManagerConnections && viewItem == connection",
+          "group": "connection@1"
+        },
+        {
+          "command": "dbManager.exportDatabase",
+          "when": "view == dbManagerConnections && viewItem == database",
+          "group": "database@1"
+        },
+        {
+          "command": "dbManager.importDatabase",
+          "when": "view == dbManagerConnections && viewItem == database",
+          "group": "database@2"
+        },
+        {
+          "command": "dbManager.openQueryEditor",
+          "when": "view == dbManagerConnections && viewItem == database",
+          "group": "database@3"
+        },
+        {
+          "command": "dbManager.openTable",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@1"
+        },
+        {
+          "command": "dbManager.exportTable",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@2"
+        },
+        {
+          "command": "dbManager.importTable",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@3"
+        },
+        {
+          "command": "dbManager.truncateTable",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@4"
+        },
+        {
+          "command": "dbManager.dropTable",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@5"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DB Manager",
+      "properties": {
+        "dbManager.pageSize": {
+          "type": "number",
+          "default": 100,
+          "description": "Number of rows per page in table viewer"
+        },
+        "dbManager.queryTimeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Query timeout in milliseconds"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run bundle -- --production",
+    "bundle": "node esbuild.js",
+    "bundle:watch": "node esbuild.js --watch",
+    "compile": "tsc --noEmit",
+    "watch": "tsc --noEmit --watch",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}
