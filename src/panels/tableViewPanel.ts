@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, ColumnInfo } from '../connectionManager';
+import { exportTable, importTable } from '../importExport';
 
 interface TableViewState {
   connectionId: string;
@@ -22,7 +23,9 @@ type FromWebview =
   | { type: 'changePageSize'; pageSize: number }
   | { type: 'updateRow'; row: Record<string, unknown>; updates: Record<string, unknown> }
   | { type: 'insertRow'; row: Record<string, unknown> }
-  | { type: 'deleteRow'; row: Record<string, unknown> };
+  | { type: 'deleteRow'; row: Record<string, unknown> }
+  | { type: 'panelExport' }
+  | { type: 'panelImport' };
 
 /** Messages extension → webview */
 type ToWebview =
@@ -277,6 +280,25 @@ export class TableViewPanel {
         break;
       }
 
+      case 'panelExport':
+        await exportTable(
+          this.connMgr,
+          this.state.connectionId,
+          this.state.schema,
+          this.state.table
+        );
+        break;
+
+      case 'panelImport':
+        await importTable(
+          this.connMgr,
+          this.state.connectionId,
+          this.state.schema,
+          this.state.table
+        );
+        await this.fetchAndPost();
+        break;
+
       default:
         break;
     }
@@ -395,6 +417,18 @@ function getShellHtml(schema: string, table: string): string {
     td.act { width: 96px; white-space: nowrap; }
     .rb { font-size: 11px; padding: 2px 6px; margin-right: 4px; }
     .rb.del { background: transparent; color: var(--vscode-errorForeground, #f48771); }
+    tbody tr.tr-draft td { white-space: normal; vertical-align: middle; }
+    .draft-cell {
+      width: 100%; min-width: 48px; max-width: 320px; box-sizing: border-box;
+      padding: 3px 6px; font-size: 12px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, #555);
+      border-radius: 2px;
+      font-family: var(--vscode-editor-font-family, monospace);
+    }
+    .draft-cell:focus { outline: 1px solid var(--vscode-focusBorder); }
+    textarea.draft-cell { min-height: 40px; resize: vertical; vertical-align: top; }
 
     .statusbar {
       display: flex; align-items: center; gap: 10px;
@@ -446,6 +480,41 @@ function getShellHtml(schema: string, table: string): string {
     .fields input[readonly], .fields textarea[readonly] { opacity: 0.65; cursor: not-allowed; }
     .modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .hint { font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 10px; }
+
+    .row-ctx-menu {
+      position: fixed;
+      z-index: 60;
+      min-width: 168px;
+      padding: 4px 0;
+      background: var(--vscode-menu-background, var(--vscode-editor-background));
+      color: var(--vscode-menu-foreground, var(--vscode-foreground));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    }
+    .row-ctx-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 6px 14px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: var(--vscode-font-family);
+    }
+    .row-ctx-item:hover:not(:disabled) {
+      background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground));
+      color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground));
+    }
+    .row-ctx-item.danger:hover:not(:disabled) {
+      color: var(--vscode-errorForeground, #f48771);
+    }
+    .row-ctx-item:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
   </style>
 </head>
 <body>
@@ -457,6 +526,8 @@ function getShellHtml(schema: string, table: string): string {
     <span class="spacer"></span>
     <button class="btn-primary" id="btnInsert" type="button">+ Row</button>
     <button id="btnRefresh" type="button">↻ Refresh</button>
+    <button id="btnExport" type="button" title="Export table (CSV / JSON / SQL)">Export</button>
+    <button id="btnImport" type="button" title="Import from file">Import</button>
     <select id="ps" aria-label="Page size">
       <option value="50">50</option>
       <option value="100" selected>100</option>
@@ -515,8 +586,75 @@ function getShellHtml(schema: string, table: string): string {
   /** @type {Record<string, unknown>|null} */
   let modalRow = null;
   let hasPK = true;
+  let rowCtxMenuEl = null;
+  let rowCtxCloseOnDoc = null;
 
   const el = (id) => document.getElementById(id);
+
+  function hideRowContextMenu() {
+    if (rowCtxMenuEl) {
+      rowCtxMenuEl.remove();
+      rowCtxMenuEl = null;
+    }
+    if (rowCtxCloseOnDoc) {
+      document.removeEventListener('click', rowCtxCloseOnDoc, true);
+      rowCtxCloseOnDoc = null;
+    }
+  }
+
+  function showRowContextMenu(clientX, clientY, r) {
+    hideRowContextMenu();
+    const menu = document.createElement('div');
+    menu.className = 'row-ctx-menu';
+    menu.setAttribute('role', 'menu');
+
+    function addItem(label, opts) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'row-ctx-item' + (opts.danger ? ' danger' : '');
+      item.textContent = label;
+      item.disabled = !!opts.disabled;
+      item.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+        hideRowContextMenu();
+        if (!item.disabled && opts.onPick) opts.onPick();
+      });
+      menu.appendChild(item);
+    }
+
+    addItem('Edit', {
+      disabled: !hasPK,
+      onPick: function () { openEdit(r); },
+    });
+    addItem('Delete', {
+      disabled: !hasPK,
+      danger: true,
+      onPick: function () {
+        if (!confirm('Delete this row?')) return;
+        vscode.postMessage({ type: 'deleteRow', row: r });
+      },
+    });
+
+    document.body.appendChild(menu);
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    let x = clientX;
+    let y = clientY;
+    if (x + w > window.innerWidth - 6) x = Math.max(6, window.innerWidth - w - 6);
+    if (y + h > window.innerHeight - 6) y = Math.max(6, window.innerHeight - h - 6);
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    rowCtxMenuEl = menu;
+
+    rowCtxCloseOnDoc = function (ev) {
+      if (menu.contains(ev.target)) return;
+      hideRowContextMenu();
+    };
+    setTimeout(function () {
+      document.addEventListener('click', rowCtxCloseOnDoc, true);
+    }, 0);
+  }
 
   function showMsg(text, kind) {
     const a = el('msgArea');
@@ -566,20 +704,67 @@ function getShellHtml(schema: string, table: string): string {
     tr.appendChild(thAct);
   }
 
+  function renderDraftRow() {
+    const tr = document.createElement('tr');
+    tr.className = 'tr-draft';
+
+    const tdN = document.createElement('td');
+    tdN.className = 'rn';
+    tdN.textContent = '—';
+    tr.appendChild(tdN);
+
+    COLS.forEach(function (c) {
+      const td = document.createElement('td');
+      let inp;
+      if (fieldTag(c) === 'textarea') {
+        inp = document.createElement('textarea');
+        inp.rows = 2;
+        inp.className = 'draft-cell';
+      } else {
+        inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'draft-cell';
+      }
+      inp.id = 'draft_' + c.name;
+      inp.placeholder = c.nullable === 'YES' ? '(empty = NULL)' : '';
+      inp.title = c.type + (c.is_primary ? ' · PK' : '');
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+
+    const tdAct = document.createElement('td');
+    tdAct.className = 'act';
+    const bIns = document.createElement('button');
+    bIns.className = 'rb btn-primary';
+    bIns.type = 'button';
+    bIns.textContent = 'Insert';
+    bIns.title = 'Insert new row from this line';
+    bIns.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const row = {};
+      COLS.forEach(function (c) {
+        const node = document.getElementById('draft_' + c.name);
+        const raw = node && 'value' in node ? node.value : '';
+        row[c.name] = raw === '' ? null : raw;
+      });
+      vscode.postMessage({ type: 'insertRow', row: row });
+    });
+    tdAct.appendChild(bIns);
+    tr.appendChild(tdAct);
+    return tr;
+  }
+
   function renderBody() {
+    hideRowContextMenu();
     const tbody = el('tbody');
     const empty = el('emptyState');
     const tbl = el('dataTable');
-    if (!rows.length) {
-      tbody.innerHTML = '';
-      empty.style.display = 'block';
-      tbl.style.display = 'none';
-      return;
-    }
-    empty.style.display = 'none';
-    tbl.style.display = 'table';
     tbody.innerHTML = '';
-    const off = pg * pageSize;
+
+    if (rows.length > 0) {
+      empty.style.display = 'none';
+      tbl.style.display = 'table';
+      const off = pg * pageSize;
 
     rows.forEach(function (r, i) {
       const tr = document.createElement('tr');
@@ -587,6 +772,18 @@ function getShellHtml(schema: string, table: string): string {
         document.querySelectorAll('#tbody tr.selected').forEach(function (x) { x.classList.remove('selected'); });
         tr.classList.add('selected');
       });
+      tr.addEventListener('dblclick', function (e) {
+        if (e.target.closest('button')) return;
+        openEdit(r);
+      });
+      tr.addEventListener('contextmenu', function (e) {
+        if (e.target.closest('button')) return;
+        e.preventDefault();
+        document.querySelectorAll('#tbody tr.selected').forEach(function (x) { x.classList.remove('selected'); });
+        tr.classList.add('selected');
+        showRowContextMenu(e.clientX, e.clientY, r);
+      });
+      tr.title = 'Double-click to edit · Right-click for menu';
 
       const tdN = document.createElement('td');
       tdN.className = 'rn';
@@ -639,6 +836,19 @@ function getShellHtml(schema: string, table: string): string {
       tr.appendChild(tdAct);
       tbody.appendChild(tr);
     });
+      return;
+    }
+
+    if (total === 0) {
+      empty.style.display = 'none';
+      tbl.style.display = 'table';
+      tbody.appendChild(renderDraftRow());
+      return;
+    }
+
+    empty.textContent = 'No rows on this page (try another page or clear filter)';
+    empty.style.display = 'block';
+    tbl.style.display = 'none';
   }
 
   function renderStatus() {
@@ -684,6 +894,7 @@ function getShellHtml(schema: string, table: string): string {
     lastPg = Math.max(0, Math.ceil(total / pageSize) - 1);
     el('tbTitle').innerHTML = '📋 <strong>' + esc(m.schema) + '.' + esc(m.table) + '</strong>';
 
+    el('emptyState').textContent = 'No rows';
     renderHead();
     renderBody();
     renderStatus();
@@ -755,6 +966,12 @@ function getShellHtml(schema: string, table: string): string {
 
   el('btnRefresh').addEventListener('click', function () {
     vscode.postMessage({ type: 'refresh' });
+  });
+  el('btnExport').addEventListener('click', function () {
+    vscode.postMessage({ type: 'panelExport' });
+  });
+  el('btnImport').addEventListener('click', function () {
+    vscode.postMessage({ type: 'panelImport' });
   });
   el('ps').addEventListener('change', function () {
     const v = parseInt(el('ps').value, 10);
@@ -880,7 +1097,10 @@ function getShellHtml(schema: string, table: string): string {
   });
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') {
+      hideRowContextMenu();
+      closeModal();
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && el('overlay').classList.contains('open')) {
       el('msave').click();
     }

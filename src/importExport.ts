@@ -5,6 +5,37 @@ import { ConnectionManager, ColumnInfo } from './connectionManager';
 
 // ─── Export ────────────────────────────────────────────────────────────────
 
+export async function exportTableStructure(
+  connMgr: ConnectionManager,
+  connectionId: string,
+  schema: string,
+  table: string
+): Promise<void> {
+  const uri = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(`${table}_structure.sql`),
+    filters: { 'SQL': ['sql'], 'All Files': ['*'] },
+    title: `Export structure of "${schema}"."${table}"`,
+  });
+  if (!uri) {
+    return;
+  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Exporting structure of ${table}...`,
+      cancellable: false,
+    },
+    async () => {
+      const ddl = await connMgr.getTableStructureDdl(connectionId, schema, table);
+      fs.writeFileSync(uri.fsPath, ddl, 'utf8');
+      vscode.window.showInformationMessage(
+        `Structure saved to ${path.basename(uri.fsPath)}`
+      );
+    }
+  );
+}
+
 export async function exportTable(
   connMgr: ConnectionManager,
   connectionId: string,
@@ -129,18 +160,40 @@ export async function importTable(
   });
   if (!uris?.length) { return; }
 
-  const mode = await vscode.window.showQuickPick(['Append rows', 'Truncate then import'], {
-    placeHolder: 'Import mode',
-  });
-  if (!mode) { return; }
+  const modePick = await vscode.window.showQuickPick(
+    [
+      {
+        label: 'Append rows',
+        description: 'Keep existing data',
+        mode: 'append' as const,
+      },
+      {
+        label: 'Clear then import (DELETE)',
+        description: 'Deletes dependent tables first (FK), then this table, then imports',
+        mode: 'delete' as const,
+      },
+      {
+        label: 'Clear then import (TRUNCATE CASCADE)',
+        description: 'Also removes rows in tables that reference this one (use with care)',
+        mode: 'truncate_cascade' as const,
+      },
+    ],
+    { placeHolder: 'Import mode' }
+  );
+  if (!modePick) { return; }
 
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Importing into ${table}...`, cancellable: false },
     async () => {
       const content = fs.readFileSync(uris[0].fsPath, 'utf8');
 
-      if (mode === 'Truncate then import') {
-        await connMgr.query(connectionId, `TRUNCATE TABLE "${schema}"."${table}"`);
+      if (modePick.mode === 'delete') {
+        await connMgr.deleteAllRowsFromTableRespectingFKs(connectionId, schema, table);
+      } else if (modePick.mode === 'truncate_cascade') {
+        await connMgr.query(
+          connectionId,
+          `TRUNCATE TABLE "${schema}"."${table}" RESTART IDENTITY CASCADE`
+        );
       }
 
       let rowCount = 0;
@@ -265,21 +318,38 @@ async function importCsv(
   table: string,
   content: string
 ): Promise<number> {
-  const lines = content.split('\n').filter(l => l.trim());
+  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n').filter(l => l.trim());
   if (lines.length < 2) { return 0; }
 
-  const headers = parseCsvLine(lines[0]);
+  const headers = parseCsvLine(lines[0]).map(stripCsvBom).map(trimHeaderName);
   let count = 0;
 
   for (let i = 1; i < lines.length; i++) {
     const values = parseCsvLine(lines[i]);
     if (values.length !== headers.length) { continue; }
     const row: Record<string, unknown> = {};
-    headers.forEach((h, idx) => { row[h] = values[idx] === '' ? null : values[idx]; });
+    headers.forEach((h, idx) => {
+      const v = values[idx];
+      row[h] = v === '' || v === undefined ? null : v;
+    });
     await connMgr.insertRow(connectionId, schema, table, row);
     count++;
   }
   return count;
+}
+
+/** Remove CR and trim so Windows CRLF / stray \\r in cells do not break column names. */
+function stripCarriageReturns(s: string): string {
+  return s.replace(/\r/g, '');
+}
+
+function stripCsvBom(s: string): string {
+  return s.replace(/^\uFEFF/, '');
+}
+
+function trimHeaderName(s: string): string {
+  return stripCarriageReturns(s).trim();
 }
 
 function parseCsvLine(line: string): string[] {
@@ -297,13 +367,13 @@ function parseCsvLine(line: string): string[] {
         inQuotes = !inQuotes;
       }
     } else if (ch === ',' && !inQuotes) {
-      result.push(current);
+      result.push(stripCarriageReturns(current));
       current = '';
     } else {
       current += ch;
     }
   }
-  result.push(current);
+  result.push(stripCarriageReturns(current));
   return result;
 }
 

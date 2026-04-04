@@ -1,6 +1,19 @@
 import * as vscode from 'vscode';
 import { Pool, PoolClient, QueryResult } from 'pg';
 
+interface PgColRow {
+  col: string;
+  typ: string;
+  not_null: boolean;
+  def_expr: string | null;
+  identity: string;
+  generated: string;
+}
+
+function quoteIdentPg(ident: string): string {
+  return `"${String(ident).replace(/"/g, '""')}"`;
+}
+
 export interface ConnectionConfig {
   id: string;
   name: string;
@@ -141,6 +154,67 @@ export class ConnectionManager {
     return result.rows as { schema: string; name: string; type: string }[];
   }
 
+  /**
+   * Tables that reference `schema.table` via foreign keys (directly or transitively),
+   * in an order safe for DELETE: deepest dependents first. Excludes self-referential
+   * FK rows (same table as parent and child).
+   */
+  async getReferencingTablesDeleteOrder(
+    connectionId: string,
+    schema: string,
+    table: string
+  ): Promise<{ schema: string; name: string }[]> {
+    const result = await this.query(
+      connectionId,
+      `WITH RECURSIVE dependents AS (
+         SELECT con.conrelid AS tbl_oid, 1 AS lvl
+         FROM pg_constraint con
+         WHERE con.contype = 'f'
+           AND con.confrelid = (
+             SELECT cl.oid
+             FROM pg_class cl
+             JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+             WHERE ns.nspname = $1::name AND cl.relname = $2::name
+           )
+           AND con.conrelid <> con.confrelid
+         UNION ALL
+         SELECT con.conrelid, d.lvl + 1
+         FROM pg_constraint con
+         JOIN dependents d ON con.confrelid = d.tbl_oid
+         WHERE con.contype = 'f'
+           AND con.conrelid <> con.confrelid
+       ),
+       ranked AS (
+         SELECT tbl_oid, max(lvl) AS max_lvl
+         FROM dependents
+         GROUP BY tbl_oid
+       )
+       SELECT ns.nspname AS schema_name, cl.relname AS table_name
+       FROM ranked r
+       JOIN pg_class cl ON cl.oid = r.tbl_oid
+       JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+       ORDER BY r.max_lvl DESC, ns.nspname, cl.relname`,
+      [schema, table]
+    );
+    return (result.rows as { schema_name: string; table_name: string }[]).map(r => ({
+      schema: r.schema_name,
+      name: r.table_name,
+    }));
+  }
+
+  /** DELETE FROM all tables that reference `schema.table`, then DELETE FROM target. */
+  async deleteAllRowsFromTableRespectingFKs(
+    connectionId: string,
+    schema: string,
+    table: string
+  ): Promise<void> {
+    const refs = await this.getReferencingTablesDeleteOrder(connectionId, schema, table);
+    for (const t of refs) {
+      await this.query(connectionId, `DELETE FROM "${t.schema}"."${t.name}"`);
+    }
+    await this.query(connectionId, `DELETE FROM "${schema}"."${table}"`);
+  }
+
   async getColumns(connectionId: string, schema: string, table: string): Promise<ColumnInfo[]> {
     const result = await this.query(
       connectionId,
@@ -167,6 +241,142 @@ export class ConnectionManager {
       [schema, table]
     );
     return result.rows as ColumnInfo[];
+  }
+
+  /**
+   * CREATE TABLE (and related) DDL for ordinary tables; CREATE [MATERIALIZED] VIEW for views.
+   */
+  async getTableStructureDdl(connectionId: string, schema: string, table: string): Promise<string> {
+    const rel = await this.query(
+      connectionId,
+      `SELECT c.oid, c.relkind::text AS relkind
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = $1::name AND c.relname = $2::name`,
+      [schema, table]
+    );
+    if (rel.rows.length === 0) {
+      throw new Error(`Relation "${schema}"."${table}" not found`);
+    }
+    const { oid, relkind } = rel.rows[0] as { oid: number; relkind: string };
+    const fq = `${quoteIdentPg(schema)}.${quoteIdentPg(table)}`;
+    const header = `-- Structure: ${fq}\n-- Generated: ${new Date().toISOString()}\n\n`;
+
+    if (relkind === 'v') {
+      const r = await this.query(
+        connectionId,
+        `SELECT pg_catalog.pg_get_viewdef($1::regclass, true) AS def`,
+        [`${quoteIdentPg(schema)}.${quoteIdentPg(table)}`]
+      );
+      const def = (r.rows[0] as { def: string }).def;
+      return `${header}CREATE OR REPLACE VIEW ${fq} AS\n${def};\n`;
+    }
+    if (relkind === 'm') {
+      const r = await this.query(
+        connectionId,
+        `SELECT pg_catalog.pg_get_viewdef($1::regclass, true) AS def`,
+        [`${quoteIdentPg(schema)}.${quoteIdentPg(table)}`]
+      );
+      const def = (r.rows[0] as { def: string }).def;
+      return `${header}DROP MATERIALIZED VIEW IF EXISTS ${fq};\nCREATE MATERIALIZED VIEW ${fq} AS\n${def};\n`;
+    }
+    if (relkind === 'f') {
+      return `${header}-- Foreign table ${fq}: use pg_dump or server metadata to recreate.\n`;
+    }
+    if (relkind !== 'r' && relkind !== 'p') {
+      return `${header}-- Relation kind "${relkind}" is not supported for structure export.\n`;
+    }
+
+    const cols = await this.query(
+      connectionId,
+      `SELECT
+         a.attname::text AS col,
+         pg_catalog.format_type(a.atttypid, a.atttypmod) AS typ,
+         a.attnotnull AS not_null,
+         pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) AS def_expr,
+         COALESCE(a.attidentity::text, '') AS identity,
+         COALESCE(a.attgenerated::text, '') AS generated
+       FROM pg_catalog.pg_attribute a
+       JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+       WHERE n.nspname = $1::name AND c.relname = $2::name
+         AND a.attnum > 0 AND NOT a.attisdropped
+       ORDER BY a.attnum`,
+      [schema, table]
+    );
+
+    const colLines = (cols.rows as PgColRow[]).map(row => {
+      let line = `  ${quoteIdentPg(row.col)} ${row.typ}`;
+      const id = row.identity;
+      const gen = row.generated;
+      if (id === 'a' || id === 'd') {
+        line += id === 'a' ? ' GENERATED ALWAYS AS IDENTITY' : ' GENERATED BY DEFAULT AS IDENTITY';
+      } else if (gen === 's' && row.def_expr) {
+        line += ` GENERATED ALWAYS AS (${row.def_expr}) STORED`;
+      } else if (row.def_expr != null && String(row.def_expr).length > 0) {
+        line += ` DEFAULT ${row.def_expr}`;
+      }
+      if (row.not_null) {
+        line += ' NOT NULL';
+      }
+      return line;
+    });
+
+    const tblConstr = await this.query(
+      connectionId,
+      `SELECT conname::text AS conname, contype::text AS contype,
+              pg_catalog.pg_get_constraintdef(oid, true) AS def
+       FROM pg_catalog.pg_constraint
+       WHERE conrelid = $1::oid AND contype IN ('p', 'u', 'c')
+       ORDER BY CASE contype WHEN 'p' THEN 1 WHEN 'u' THEN 2 ELSE 3 END, conname`,
+      [oid]
+    );
+    const constrLines = (tblConstr.rows as { conname: string; def: string }[]).map(
+      r => `  CONSTRAINT ${quoteIdentPg(r.conname)} ${r.def}`
+    );
+
+    const fkRows = await this.query(
+      connectionId,
+      `SELECT conname::text AS conname, pg_catalog.pg_get_constraintdef(oid, true) AS def
+       FROM pg_catalog.pg_constraint
+       WHERE conrelid = $1::oid AND contype = 'f'
+       ORDER BY conname`,
+      [oid]
+    );
+
+    const idxRows = await this.query(
+      connectionId,
+      `SELECT pg_catalog.pg_get_indexdef(i.indexrelid, 0, true) AS def
+       FROM pg_catalog.pg_index i
+       WHERE i.indrelid = $1::oid
+         AND NOT i.indisprimary
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_constraint co
+           WHERE co.conindid = i.indexrelid
+         )
+       ORDER BY i.indexrelid::regclass::text`,
+      [oid]
+    );
+
+    const parts: string[] = [
+      header,
+      `-- Uncomment to replace existing object:\n-- DROP TABLE IF EXISTS ${fq} CASCADE;\n\n`,
+      `CREATE TABLE ${fq} (\n`,
+      [...colLines, ...constrLines].join(',\n'),
+      '\n);\n',
+    ];
+
+    for (const fk of fkRows.rows as { conname: string; def: string }[]) {
+      parts.push(
+        `\nALTER TABLE ${fq} ADD CONSTRAINT ${quoteIdentPg(fk.conname)} ${fk.def};\n`
+      );
+    }
+    for (const ir of idxRows.rows as { def: string }[]) {
+      parts.push(`\n${ir.def};\n`);
+    }
+
+    return parts.join('');
   }
 
   async getTableCount(connectionId: string, schema: string, table: string): Promise<number> {

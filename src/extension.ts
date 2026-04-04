@@ -6,6 +6,7 @@ import { ConnectionPanel } from './panels/connectionPanel';
 import { QueryEditorPanel } from './panels/queryEditorPanel';
 import {
   exportTable,
+  exportTableStructure,
   exportDatabase,
   importTable,
   importDatabase,
@@ -58,6 +59,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('dbManager.openTable', (item: DbTreeItem) => {
       TableViewPanel.show(
         context,
+        connMgr,
+        item.connectionId,
+        item.schema ?? 'public',
+        item.tableName ?? item.label as string
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbManager.exportTableStructure', async (item: DbTreeItem) => {
+      await exportTableStructure(
         connMgr,
         item.connectionId,
         item.schema ?? 'public',
