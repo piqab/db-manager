@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.15",
+  "version": "0.1.18",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -61,6 +61,12 @@
         "category": "DB Manager"
       },
       {
+        "command": "dbManager.exportTableStructure",
+        "title": "Export Table Structure (SQL DDL)",
+        "icon": "$(file-code)",
+        "category": "DB Manager"
+      },
+      {
         "command": "dbManager.exportTable",
         "title": "Export Table (CSV/JSON/SQL)",
         "icon": "$(export)",
@@ -108,12 +114,12 @@
         {
           "command": "dbManager.addConnection",
           "when": "view == dbManagerConnections",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "dbManager.refreshConnections",
           "when": "view == dbManagerConnections",
-          "group": "navigation"
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -143,24 +149,39 @@
           "group": "table@1"
         },
         {
-          "command": "dbManager.exportTable",
+          "command": "dbManager.exportTableStructure",
           "when": "view == dbManagerConnections && viewItem == table",
           "group": "table@2"
         },
         {
-          "command": "dbManager.importTable",
+          "command": "dbManager.exportTable",
           "when": "view == dbManagerConnections && viewItem == table",
           "group": "table@3"
         },
         {
-          "command": "dbManager.truncateTable",
+          "command": "dbManager.importTable",
           "when": "view == dbManagerConnections && viewItem == table",
           "group": "table@4"
         },
         {
-          "command": "dbManager.dropTable",
+          "command": "dbManager.truncateTable",
           "when": "view == dbManagerConnections && viewItem == table",
           "group": "table@5"
+        },
+        {
+          "command": "dbManager.dropTable",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@6"
+        },
+        {
+          "command": "dbManager.openTable",
+          "when": "view == dbManagerConnections && viewItem == view",
+          "group": "view@1"
+        },
+        {
+          "command": "dbManager.exportTableStructure",
+          "when": "view == dbManagerConnections && viewItem == view",
+          "group": "view@2"
         }
       ]
     },
