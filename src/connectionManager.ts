@@ -534,13 +534,13 @@ export class ConnectionManager {
   }
 
   /**
-   * Line-oriented SQL file import (readline): does not load the whole file into one string.
-   * Multi-row INSERT VALUES is expanded per tuple without allocating all rows at once.
+   * Streaming SQL file import: `onProgress(statementsRead, queriesSent)` — fragments parsed
+   * from the file vs queries executed after INSERT expansion.
    */
   async executeScriptBatchedFromFile(
     connectionId: string,
     filePath: string,
-    options?: { onProgress?: (executed: number) => void }
+    options?: { onProgress?: (statementsRead: number, queriesSent: number) => void }
   ): Promise<{ statementsExecuted: number; rowsAffected: number }> {
     const { importSqlFileStreaming } = await import('./streamingImport.js');
     return importSqlFileStreaming(this, connectionId, filePath, options);

@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -229,10 +229,10 @@
         },
         "dbManager.maxSqlStatementBytes": {
           "type": "number",
-          "default": 67108864,
+          "default": 268435456,
           "minimum": 1048576,
           "maximum": 536870912,
-          "description": "Max size in bytes for one SQL statement while reading line-by-line (multi-line CREATE, etc.). Increase only if needed."
+          "description": "Max bytes held in the SQL buffer between ';' and newline (one unfinished statement tail). Streaming splits on ';' + newline as data is read."
         },
         "dbManager.jsonImportMaxParseBytes": {
           "type": "number",

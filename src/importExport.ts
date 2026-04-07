@@ -265,8 +265,10 @@ export async function importDatabase(
       const filePath = uris[0].fsPath;
       try {
         const { statementsExecuted } = await connMgr.executeScriptBatchedFromFile(connectionId, filePath, {
-          onProgress: (done) => {
-            progress.report({ message: `${done} statements` });
+          onProgress: (read, sent) => {
+            progress.report({
+              message: `прочитано из файла: ${read} · отправлено в БД: ${sent}`,
+            });
           },
         });
         void vscode.window.showInformationMessage(
@@ -391,8 +393,10 @@ async function importSql(
   progress?: vscode.Progress<{ message?: string }>
 ): Promise<number> {
   const { rowsAffected } = await connMgr.executeScriptBatchedFromFile(connectionId, filePath, {
-    onProgress: (done) => {
-      progress?.report({ message: `${done} SQL statements` });
+    onProgress: (read, sent) => {
+      progress?.report({
+        message: `прочитано из файла: ${read} · отправлено в БД: ${sent}`,
+      });
     },
   });
   return rowsAffected;
