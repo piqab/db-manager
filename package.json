@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
