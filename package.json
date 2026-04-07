@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -196,7 +196,14 @@
         "dbManager.queryTimeout": {
           "type": "number",
           "default": 30000,
-          "description": "Query timeout in milliseconds"
+          "description": "Per-statement timeout in milliseconds (also applies to each SQL statement during import). Increase for very large INSERT batches."
+        },
+        "dbManager.sqlImportBatchSize": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "How many SQL statements to run per batch when importing large .sql files (table/database import)"
         }
       }
     }

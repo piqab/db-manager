@@ -184,7 +184,7 @@ export async function importTable(
 
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Importing into ${table}...`, cancellable: false },
-    async () => {
+    async (progress) => {
       const content = fs.readFileSync(uris[0].fsPath, 'utf8');
 
       if (modePick.mode === 'delete') {
@@ -205,7 +205,7 @@ export async function importTable(
           rowCount = await importJson(connMgr, connectionId, schema, table, content);
           break;
         case 'SQL':
-          rowCount = await importSql(connMgr, connectionId, content);
+          rowCount = await importSql(connMgr, connectionId, content, progress);
           break;
       }
 
@@ -236,11 +236,15 @@ export async function importDatabase(
 
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Importing SQL dump...', cancellable: false },
-    async () => {
+    async (progress) => {
       const content = fs.readFileSync(uris[0].fsPath, 'utf8');
-      const results = await connMgr.executeScript(connectionId, content);
+      const { statementsExecuted } = await connMgr.executeScriptBatched(connectionId, content, {
+        onProgress: (done, total) => {
+          progress.report({ message: `${done} / ${total} statements` });
+        },
+      });
       vscode.window.showInformationMessage(
-        `SQL dump imported (${results.length} statements executed)`
+        `SQL dump imported (${statementsExecuted} statements executed)`
       );
     }
   );
@@ -395,8 +399,13 @@ async function importJson(
 async function importSql(
   connMgr: ConnectionManager,
   connectionId: string,
-  content: string
+  content: string,
+  progress?: vscode.Progress<{ message?: string }>
 ): Promise<number> {
-  const results = await connMgr.executeScript(connectionId, content);
-  return results.reduce((sum, r) => sum + (r.rowCount ?? 0), 0);
+  const { rowsAffected } = await connMgr.executeScriptBatched(connectionId, content, {
+    onProgress: (done, total) => {
+      progress?.report({ message: `${done} / ${total} SQL statements` });
+    },
+  });
+  return rowsAffected;
 }

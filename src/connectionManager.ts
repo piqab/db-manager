@@ -82,6 +82,10 @@ export class ConnectionManager {
       max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      keepAlive: true,
+    });
+    pool.on('error', (err: Error) => {
+      console.error('[db-manager] PostgreSQL pool error:', err.message);
     });
     this.pools.set(connectionId, pool);
     return pool;
@@ -482,6 +486,43 @@ export class ConnectionManager {
       }
     });
     return results;
+  }
+
+  /**
+   * Run many statements in batches (same split as executeScript — `;` outside strings is not handled).
+   * Each statement uses `query()` (short-lived connection, `statement_timeout` applied) so long imports
+   * do not keep a single TCP session open for the whole file — avoids "Connection terminated unexpectedly".
+   */
+  async executeScriptBatched(
+    connectionId: string,
+    sql: string,
+    options?: { onProgress?: (executed: number, total: number) => void }
+  ): Promise<{ statementsExecuted: number; rowsAffected: number }> {
+    const batchSize = vscode.workspace.getConfiguration('dbManager').get<number>('sqlImportBatchSize', 100);
+    const statements = sql
+      .split(/;\s*\n|;\s*$/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    const total = statements.length;
+    let rowsAffected = 0;
+    let executed = 0;
+
+    for (let i = 0; i < statements.length; i += batchSize) {
+      const end = Math.min(i + batchSize, statements.length);
+      for (let j = i; j < end; j++) {
+        const result = await this.query(connectionId, statements[j]);
+        const rc = result.rowCount;
+        if (typeof rc === 'number' && rc > 0) {
+          rowsAffected += rc;
+        }
+        executed++;
+      }
+      options?.onProgress?.(executed, total);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+
+    return { statementsExecuted: executed, rowsAffected };
   }
 
   private async closePool(id: string): Promise<void> {
