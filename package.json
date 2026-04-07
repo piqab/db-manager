@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -255,6 +255,13 @@
           "type": "number",
           "default": 30000,
           "description": "Per-statement timeout in milliseconds (also applies to each SQL statement during import). Increase for very large INSERT batches."
+        },
+        "dbManager.connectionTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 2000,
+          "maximum": 120000,
+          "description": "TCP connection timeout (ms) when opening a PostgreSQL connection (Test Connection, tree, queries). Increase on slow networks or if you see ETIMEDOUT."
         },
         "dbManager.sqlImportBatchSize": {
           "type": "number",

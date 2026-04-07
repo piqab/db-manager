@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { ConnectionConfig, ConnectionManager } from '../connectionManager';
+import { ConnectionConfig, ConnectionManager, formatDbError } from '../connectionManager';
 
 export class ConnectionPanel {
   static async show(
@@ -25,8 +25,7 @@ export class ConnectionPanel {
             await connMgr.testConnection(msg.config);
             panel.webview.postMessage({ type: 'testResult', success: true, message: 'Connection successful!' });
           } catch (err) {
-            const error = err instanceof Error ? err.message : String(err);
-            panel.webview.postMessage({ type: 'testResult', success: false, message: error });
+            panel.webview.postMessage({ type: 'testResult', success: false, message: formatDbError(err) });
           }
           break;
         }
@@ -128,6 +127,9 @@ function getHtml(
     <input id="ssl" type="checkbox" ${c?.ssl ? 'checked' : ''} />
     <span>Enable SSL (rejectUnauthorized: false)</span>
   </div>
+  <p style="margin:8px 0 0;font-size:12px;color:var(--vscode-descriptionForeground);line-height:1.4;">
+    Облачные PostgreSQL (RDS, Neon, Supabase и т.д.) обычно требуют SSL. При ошибках TLS/SSL включите галочку.
+  </p>
 </div>
 <div class="actions">
   <button class="btn-primary" onclick="save()">Save</button>

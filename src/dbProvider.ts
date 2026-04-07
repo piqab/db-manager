@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionConfig, ConnectionManager } from './connectionManager';
+import { ConnectionConfig, ConnectionManager, formatDbError } from './connectionManager';
 
 export type NodeType = 'connection' | 'database' | 'schema-group' | 'schema' | 'table-group' | 'table' | 'view-group' | 'view' | 'column';
 
@@ -97,8 +97,7 @@ export class DbProvider implements vscode.TreeDataProvider<DbTreeItem> {
           return [];
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      vscode.window.showErrorMessage(`DB Manager: ${msg}`);
+      vscode.window.showErrorMessage(`DB Manager: ${formatDbError(err)}`);
       return [];
     }
   }

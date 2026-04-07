@@ -26,6 +26,35 @@ export interface ConnectionConfig {
   ssl: boolean;
 }
 
+/** User-visible text for PostgreSQL / Node `pg` connection errors (includes `code` when present). */
+export function formatDbError(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const e = err as Error & { code?: string };
+  let msg = e.message || 'Error';
+  if (e.code) {
+    msg += ` (${e.code})`;
+  }
+  const code = e.code;
+  if (code === 'ECONNREFUSED') {
+    msg += ' — проверьте host, port и что PostgreSQL принимает TCP.';
+  } else if (code === 'ENOTFOUND') {
+    msg += ' — проверьте имя хоста (DNS).';
+  } else if (code === 'ETIMEDOUT') {
+    msg += ' — увеличьте dbManager.connectionTimeoutMs или проверьте сеть/файрвол.';
+  } else if (code === '28P01' || /password authentication failed/i.test(msg)) {
+    msg += ' — проверьте пользователя и пароль.';
+  } else if (/\bSSL\b|\bTLS\b|ssl required|no encryption/i.test(msg)) {
+    msg += ' — для многих облачных БД включите SSL в форме подключения.';
+  }
+  return msg;
+}
+
+function getConnectionTimeoutMs(): number {
+  return vscode.workspace.getConfiguration('dbManager').get<number>('connectionTimeoutMs', 30000);
+}
+
 export class ConnectionManager {
   private pools: Map<string, Pool> = new Map();
   private readonly storageKey = 'dbManager.connections';
@@ -82,7 +111,7 @@ export class ConnectionManager {
       ssl: config.ssl ? { rejectUnauthorized: false } : false,
       max: 5,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: getConnectionTimeoutMs(),
       keepAlive: true,
     });
     pool.on('error', (err: Error) => {
@@ -100,7 +129,7 @@ export class ConnectionManager {
       user: config.user,
       password: config.password,
       ssl: config.ssl ? { rejectUnauthorized: false } : false,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: getConnectionTimeoutMs(),
     });
     try {
       const client = await pool.connect();

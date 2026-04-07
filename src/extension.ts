@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager } from './connectionManager';
+import { ConnectionManager, formatDbError } from './connectionManager';
 import { DbProvider, DbTreeItem } from './dbProvider';
 import {
   BookmarkTreeItem,
@@ -57,8 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage(`Подключено: ${name}`);
         provider.refresh();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        void vscode.window.showErrorMessage(`Не удалось подключиться (${name}): ${msg}`);
+        void vscode.window.showErrorMessage(`Не удалось подключиться (${name}): ${formatDbError(err)}`);
       }
     })
   );
