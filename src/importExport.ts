@@ -185,33 +185,39 @@ export async function importTable(
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Importing into ${table}...`, cancellable: false },
     async (progress) => {
-      const content = fs.readFileSync(uris[0].fsPath, 'utf8');
+      const filePath = uris[0].fsPath;
+      try {
+        const content = format === 'SQL' ? undefined : fs.readFileSync(filePath, 'utf8');
 
-      if (modePick.mode === 'delete') {
-        await connMgr.deleteAllRowsFromTableRespectingFKs(connectionId, schema, table);
-      } else if (modePick.mode === 'truncate_cascade') {
-        await connMgr.query(
-          connectionId,
-          `TRUNCATE TABLE "${schema}"."${table}" RESTART IDENTITY CASCADE`
+        if (modePick.mode === 'delete') {
+          await connMgr.deleteAllRowsFromTableRespectingFKs(connectionId, schema, table);
+        } else if (modePick.mode === 'truncate_cascade') {
+          await connMgr.query(
+            connectionId,
+            `TRUNCATE TABLE "${schema}"."${table}" RESTART IDENTITY CASCADE`
+          );
+        }
+
+        let rowCount = 0;
+        switch (format) {
+          case 'CSV':
+            rowCount = await importCsv(connMgr, connectionId, schema, table, content!);
+            break;
+          case 'JSON':
+            rowCount = await importJson(connMgr, connectionId, schema, table, content!);
+            break;
+          case 'SQL':
+            rowCount = await importSql(connMgr, connectionId, filePath, progress);
+            break;
+        }
+
+        void vscode.window.showInformationMessage(
+          `Imported ${rowCount} rows into "${schema}"."${table}"`
         );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Import failed: ${msg}`);
       }
-
-      let rowCount = 0;
-      switch (format) {
-        case 'CSV':
-          rowCount = await importCsv(connMgr, connectionId, schema, table, content);
-          break;
-        case 'JSON':
-          rowCount = await importJson(connMgr, connectionId, schema, table, content);
-          break;
-        case 'SQL':
-          rowCount = await importSql(connMgr, connectionId, content, progress);
-          break;
-      }
-
-      vscode.window.showInformationMessage(
-        `Imported ${rowCount} rows into "${schema}"."${table}"`
-      );
     }
   );
 }
@@ -237,15 +243,20 @@ export async function importDatabase(
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Importing SQL dump...', cancellable: false },
     async (progress) => {
-      const content = fs.readFileSync(uris[0].fsPath, 'utf8');
-      const { statementsExecuted } = await connMgr.executeScriptBatched(connectionId, content, {
-        onProgress: (done, total) => {
-          progress.report({ message: `${done} / ${total} statements` });
-        },
-      });
-      vscode.window.showInformationMessage(
-        `SQL dump imported (${statementsExecuted} statements executed)`
-      );
+      const filePath = uris[0].fsPath;
+      try {
+        const { statementsExecuted } = await connMgr.executeScriptBatchedFromFile(connectionId, filePath, {
+          onProgress: (done) => {
+            progress.report({ message: `${done} statements` });
+          },
+        });
+        void vscode.window.showInformationMessage(
+          `SQL dump imported (${statementsExecuted} statements executed)`
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Import failed: ${msg}`);
+      }
     }
   );
 }
@@ -399,12 +410,12 @@ async function importJson(
 async function importSql(
   connMgr: ConnectionManager,
   connectionId: string,
-  content: string,
+  filePath: string,
   progress?: vscode.Progress<{ message?: string }>
 ): Promise<number> {
-  const { rowsAffected } = await connMgr.executeScriptBatched(connectionId, content, {
-    onProgress: (done, total) => {
-      progress?.report({ message: `${done} / ${total} SQL statements` });
+  const { rowsAffected } = await connMgr.executeScriptBatchedFromFile(connectionId, filePath, {
+    onProgress: (done) => {
+      progress?.report({ message: `${done} SQL statements` });
     },
   });
   return rowsAffected;

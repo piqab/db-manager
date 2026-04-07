@@ -44,6 +44,18 @@
         "category": "DB Manager"
       },
       {
+        "command": "dbManager.connectConnection",
+        "title": "Подключить",
+        "icon": "$(debug-start)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.disconnectConnection",
+        "title": "Отключить",
+        "icon": "$(debug-stop)",
+        "category": "DB Manager"
+      },
+      {
         "command": "dbManager.removeConnection",
         "title": "Remove Connection",
         "icon": "$(trash)",
@@ -124,9 +136,19 @@
       ],
       "view/item/context": [
         {
-          "command": "dbManager.removeConnection",
+          "command": "dbManager.connectConnection",
           "when": "view == dbManagerConnections && viewItem == connection",
           "group": "connection@1"
+        },
+        {
+          "command": "dbManager.disconnectConnection",
+          "when": "view == dbManagerConnections && viewItem == connection",
+          "group": "connection@2"
+        },
+        {
+          "command": "dbManager.removeConnection",
+          "when": "view == dbManagerConnections && viewItem == connection",
+          "group": "connection@3"
         },
         {
           "command": "dbManager.exportDatabase",
@@ -203,7 +225,7 @@
           "default": 100,
           "minimum": 1,
           "maximum": 10000,
-          "description": "How many SQL statements to run per batch when importing large .sql files (table/database import)"
+          "description": "How many SQL statements to run per yield when importing .sql files (streaming read; does not load the whole file into memory)"
         }
       }
     }

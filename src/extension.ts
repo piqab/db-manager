@@ -33,6 +33,37 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('dbManager.connectConnection', async (item: DbTreeItem) => {
+      if (!item?.connectionId || item.nodeType !== 'connection') {
+        return;
+      }
+      const conn = connMgr.getConnections().find(c => c.id === item.connectionId);
+      const name = conn?.name ?? item.connectionId;
+      try {
+        await connMgr.connectConnection(item.connectionId);
+        void vscode.window.showInformationMessage(`Подключено: ${name}`);
+        provider.refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Не удалось подключиться (${name}): ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbManager.disconnectConnection', async (item: DbTreeItem) => {
+      if (!item?.connectionId || item.nodeType !== 'connection') {
+        return;
+      }
+      const conn = connMgr.getConnections().find(c => c.id === item.connectionId);
+      const name = conn?.name ?? item.connectionId;
+      await connMgr.disconnectPools(item.connectionId);
+      void vscode.window.showInformationMessage(`Отключено: ${name}`);
+      provider.refresh();
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('dbManager.removeConnection', async (item: DbTreeItem) => {
       const connections = connMgr.getConnections();
       const conn = connections.find(c => c.id === item.connectionId);

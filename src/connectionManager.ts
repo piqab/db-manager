@@ -1,5 +1,42 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { Pool, PoolClient, QueryResult } from 'pg';
+
+/** Same line endings as import paths that read whole files. */
+function normalizeSqlChunk(s: string): string {
+  return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+/**
+ * EOF tail: same semantics as loading the whole file and splitting (executeScriptBatched).
+ * Semicolons inside string literals are not handled (same limitation as string-based import).
+ */
+function splitSqlRemainder(buffer: string): string[] {
+  const trimmed = buffer.trim();
+  if (!trimmed.length) {
+    return [];
+  }
+  return trimmed
+    .split(/;\s*\n|;\s*$/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+}
+
+/** Take statements terminated by `;` + newline; keep incomplete tail in `rest`. */
+function extractStatementsFromBuffer(buffer: string): { statements: string[]; rest: string } {
+  const statements: string[] = [];
+  const re = /;\s*\n/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(buffer)) !== null) {
+    const stmt = buffer.slice(lastIndex, m.index).trim();
+    lastIndex = m.index + m[0].length;
+    if (stmt.length) {
+      statements.push(stmt);
+    }
+  }
+  return { statements, rest: buffer.slice(lastIndex) };
+}
 
 interface PgColRow {
   col: string;
@@ -525,6 +562,59 @@ export class ConnectionManager {
     return { statementsExecuted: executed, rowsAffected };
   }
 
+  /**
+   * Stream a large .sql file from disk: bounded RAM (chunk buffer + one statement tail),
+   * same statement boundaries as {@link executeScriptBatched} (`;` + newline / EOF rules).
+   */
+  async executeScriptBatchedFromFile(
+    connectionId: string,
+    filePath: string,
+    options?: { onProgress?: (executed: number) => void }
+  ): Promise<{ statementsExecuted: number; rowsAffected: number }> {
+    const batchSize = vscode.workspace.getConfiguration('dbManager').get<number>('sqlImportBatchSize', 100);
+    let buffer = '';
+    let rowsAffected = 0;
+    let executed = 0;
+
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 });
+
+    const runStatement = async (sql: string) => {
+      const result = await this.query(connectionId, sql);
+      const rc = result.rowCount;
+      if (typeof rc === 'number' && rc > 0) {
+        rowsAffected += rc;
+      }
+      executed++;
+    };
+
+    const runInBatches = async (statements: string[]) => {
+      for (let i = 0; i < statements.length; i += batchSize) {
+        const end = Math.min(i + batchSize, statements.length);
+        for (let j = i; j < end; j++) {
+          await runStatement(statements[j]);
+        }
+        options?.onProgress?.(executed);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+    };
+
+    for await (const chunk of stream) {
+      buffer += normalizeSqlChunk(chunk as string);
+      const { statements, rest } = extractStatementsFromBuffer(buffer);
+      buffer = rest;
+      if (statements.length > 0) {
+        await runInBatches(statements);
+      }
+    }
+
+    const tailStatements = splitSqlRemainder(buffer);
+    if (tailStatements.length > 0) {
+      await runInBatches(tailStatements);
+    }
+
+    return { statementsExecuted: executed, rowsAffected };
+  }
+
   private async closePool(id: string): Promise<void> {
     const pool = this.pools.get(id);
     if (pool) {
@@ -536,6 +626,24 @@ export class ConnectionManager {
   async dispose(): Promise<void> {
     for (const [id] of this.pools) {
       await this.closePool(id);
+    }
+  }
+
+  /** Create pool and verify server (SELECT 1 on default database). */
+  async connectConnection(realId: string): Promise<void> {
+    const config = this.getConnections().find(c => c.id === realId);
+    if (!config) {
+      throw new Error(`Connection ${realId} not found`);
+    }
+    await this.query(realId, 'SELECT 1');
+  }
+
+  /** Close all pools for this profile (main and id::database). */
+  async disconnectPools(realId: string): Promise<void> {
+    for (const key of [...this.pools.keys()]) {
+      if (key === realId || key.startsWith(`${realId}::`)) {
+        await this.closePool(key);
+      }
     }
   }
 }
