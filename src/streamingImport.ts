@@ -61,7 +61,7 @@ async function runExpandedStatements(
       state.rowsAffected += rc;
     }
     state.sent++;
-    if (state.sent % batchSize === 0) {
+    if (state.sent % batchSize === 0 || state.sent === 1) {
       onProgress(state.statementsRead, state.sent);
       await new Promise<void>(resolve => setImmediate(resolve));
     }
@@ -88,6 +88,7 @@ export async function importSqlFileStreaming(
   let buffer = '';
   const state = { sent: 0, rowsAffected: 0, statementsRead: 0 };
   const onProgress = options?.onProgress ?? (() => {});
+  onProgress(state.statementsRead, state.sent);
 
   const flush = async (stmt: string) => {
     const t = stmt.trim();

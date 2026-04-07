@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { DbProvider, DbTreeItem } from './dbProvider';
+import {
+  BookmarkTreeItem,
+  BookmarksProvider,
+  TableBookmark,
+  addTableBookmark,
+  removeTableBookmark,
+} from './bookmarksProvider.js';
 import { TableViewPanel } from './panels/tableViewPanel';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { QueryEditorPanel } from './panels/queryEditorPanel';
@@ -23,6 +30,12 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   treeView.description = `v${context.extension.packageJSON.version}`;
   context.subscriptions.push(treeView);
+
+  const bookmarksProvider = new BookmarksProvider(context, connMgr);
+  const bookmarksTreeView = vscode.window.createTreeView('dbManagerBookmarks', {
+    treeDataProvider: bookmarksProvider,
+  });
+  context.subscriptions.push(bookmarksTreeView);
 
   // ── Commands ──────────────────────────────────────────────────────
 
@@ -95,6 +108,41 @@ export function activate(context: vscode.ExtensionContext): void {
         item.schema ?? 'public',
         item.tableName ?? item.label as string
       );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbManager.openBookmarkedTable', (b: TableBookmark) => {
+      if (!b?.connectionId) {
+        return;
+      }
+      TableViewPanel.show(context, connMgr, b.connectionId, b.schema, b.tableName);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbManager.addTableBookmark', async (item: DbTreeItem) => {
+      if (!item?.connectionId || (item.nodeType !== 'table' && item.nodeType !== 'view')) {
+        return;
+      }
+      const ok = await addTableBookmark(context, {
+        connectionId: item.connectionId,
+        schema: item.schema ?? 'public',
+        tableName: item.tableName ?? (item.label as string),
+      });
+      if (ok) {
+        bookmarksProvider.refresh();
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('dbManager.removeTableBookmark', async (item: BookmarkTreeItem) => {
+      if (!item?.bookmark) {
+        return;
+      }
+      await removeTableBookmark(context, item.bookmark.id);
+      bookmarksProvider.refresh();
     })
   );
 

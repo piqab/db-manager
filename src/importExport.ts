@@ -183,11 +183,15 @@ export async function importTable(
   );
   if (!modePick) { return; }
 
+  const importLabel = `Importing into "${schema}"."${table}"`;
+
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Importing into ${table}...`, cancellable: false },
+    { location: vscode.ProgressLocation.Notification, cancellable: false },
     async (progress) => {
       const filePath = uris[0].fsPath;
       try {
+        progress.report({ message: `${importLabel} — preparing…` });
+
         if (modePick.mode === 'delete') {
           await connMgr.deleteAllRowsFromTableRespectingFKs(connectionId, schema, table);
         } else if (modePick.mode === 'truncate_cascade') {
@@ -204,6 +208,7 @@ export async function importTable(
         let rowCount = 0;
         switch (format) {
           case 'CSV':
+            progress.report({ message: `${importLabel} — reading CSV…` });
             rowCount = await importCsvFromFile(
               connMgr,
               connectionId,
@@ -216,6 +221,7 @@ export async function importTable(
             );
             break;
           case 'JSON':
+            progress.report({ message: `${importLabel} — reading JSON…` });
             rowCount = await importJsonFromFile(
               connMgr,
               connectionId,
@@ -226,7 +232,7 @@ export async function importTable(
             );
             break;
           case 'SQL':
-            rowCount = await importSql(connMgr, connectionId, filePath, progress);
+            rowCount = await importSql(connMgr, connectionId, filePath, progress, importLabel);
             break;
         }
 
@@ -259,15 +265,18 @@ export async function importDatabase(
   );
   if (confirm !== 'Yes, import') { return; }
 
+  const dumpLabel = 'Importing SQL dump';
+
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Importing SQL dump...', cancellable: false },
+    { location: vscode.ProgressLocation.Notification, cancellable: false },
     async (progress) => {
       const filePath = uris[0].fsPath;
       try {
+        progress.report({ message: `${dumpLabel} — прочитано: 0 · отправлено: 0` });
         const { statementsExecuted } = await connMgr.executeScriptBatchedFromFile(connectionId, filePath, {
           onProgress: (read, sent) => {
             progress.report({
-              message: `прочитано из файла: ${read} · отправлено в БД: ${sent}`,
+              message: `${dumpLabel} — прочитано: ${read} · отправлено: ${sent}`,
             });
           },
         });
@@ -390,12 +399,13 @@ async function importSql(
   connMgr: ConnectionManager,
   connectionId: string,
   filePath: string,
-  progress?: vscode.Progress<{ message?: string }>
+  progress: vscode.Progress<{ message?: string }> | undefined,
+  importLabel: string
 ): Promise<number> {
   const { rowsAffected } = await connMgr.executeScriptBatchedFromFile(connectionId, filePath, {
     onProgress: (read, sent) => {
       progress?.report({
-        message: `прочитано из файла: ${read} · отправлено в БД: ${sent}`,
+        message: `${importLabel} — прочитано: ${read} · отправлено: ${sent}`,
       });
     },
   });

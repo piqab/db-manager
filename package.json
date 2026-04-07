@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -33,6 +33,10 @@
         {
           "id": "dbManagerConnections",
           "name": "Connections"
+        },
+        {
+          "id": "dbManagerBookmarks",
+          "name": "Bookmarks"
         }
       ]
     },
@@ -119,6 +123,23 @@
         "title": "Drop Table",
         "icon": "$(trash)",
         "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.addTableBookmark",
+        "title": "Bookmark table",
+        "icon": "$(bookmark)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.removeTableBookmark",
+        "title": "Remove bookmark",
+        "icon": "$(trash)",
+        "category": "DB Manager"
+      },
+      {
+        "command": "dbManager.openBookmarkedTable",
+        "title": "Open bookmarked table",
+        "category": "DB Manager"
       }
     ],
     "menus": {
@@ -166,6 +187,11 @@
           "group": "database@3"
         },
         {
+          "command": "dbManager.addTableBookmark",
+          "when": "view == dbManagerConnections && viewItem == table",
+          "group": "table@0"
+        },
+        {
           "command": "dbManager.openTable",
           "when": "view == dbManagerConnections && viewItem == table",
           "group": "table@1"
@@ -196,6 +222,11 @@
           "group": "table@6"
         },
         {
+          "command": "dbManager.addTableBookmark",
+          "when": "view == dbManagerConnections && viewItem == view",
+          "group": "view@0"
+        },
+        {
           "command": "dbManager.openTable",
           "when": "view == dbManagerConnections && viewItem == view",
           "group": "view@1"
@@ -204,6 +235,11 @@
           "command": "dbManager.exportTableStructure",
           "when": "view == dbManagerConnections && viewItem == view",
           "group": "view@2"
+        },
+        {
+          "command": "dbManager.removeTableBookmark",
+          "when": "view == dbManagerBookmarks && viewItem == tableBookmark",
+          "group": "bookmark@1"
         }
       ]
     },
