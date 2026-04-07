@@ -2,7 +2,7 @@
   "name": "db-manager",
   "displayName": "DB Manager",
   "description": "PostgreSQL database viewer, editor, import and export for VSCode",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "publisher": "db-manager",
   "repository": {
     "type": "git",
@@ -226,6 +226,20 @@
           "minimum": 1,
           "maximum": 10000,
           "description": "How many SQL statements to run per yield when importing .sql files (streaming read; does not load the whole file into memory)"
+        },
+        "dbManager.maxSqlStatementBytes": {
+          "type": "number",
+          "default": 67108864,
+          "minimum": 1048576,
+          "maximum": 536870912,
+          "description": "Max size in bytes for one SQL statement while reading line-by-line (multi-line CREATE, etc.). Increase only if needed."
+        },
+        "dbManager.jsonImportMaxParseBytes": {
+          "type": "number",
+          "default": 50331648,
+          "minimum": 0,
+          "maximum": 536870912,
+          "description": "JSON files up to this size are loaded as a single array/object. Larger files must be NDJSON (one JSON object per line)."
         }
       }
     }

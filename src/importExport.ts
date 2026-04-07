@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConnectionManager, ColumnInfo } from './connectionManager';
+import { importCsvFromFile, importJsonFromFile, DEFAULT_JSON_PARSE_MAX_BYTES } from './streamingImport.js';
 
 // ─── Export ────────────────────────────────────────────────────────────────
 
@@ -187,8 +188,6 @@ export async function importTable(
     async (progress) => {
       const filePath = uris[0].fsPath;
       try {
-        const content = format === 'SQL' ? undefined : fs.readFileSync(filePath, 'utf8');
-
         if (modePick.mode === 'delete') {
           await connMgr.deleteAllRowsFromTableRespectingFKs(connectionId, schema, table);
         } else if (modePick.mode === 'truncate_cascade') {
@@ -198,13 +197,33 @@ export async function importTable(
           );
         }
 
+        const jsonParseMax = vscode.workspace
+          .getConfiguration('dbManager')
+          .get<number>('jsonImportMaxParseBytes', DEFAULT_JSON_PARSE_MAX_BYTES);
+
         let rowCount = 0;
         switch (format) {
           case 'CSV':
-            rowCount = await importCsv(connMgr, connectionId, schema, table, content!);
+            rowCount = await importCsvFromFile(
+              connMgr,
+              connectionId,
+              schema,
+              table,
+              filePath,
+              parseCsvLine,
+              stripCsvBom,
+              trimHeaderName
+            );
             break;
           case 'JSON':
-            rowCount = await importJson(connMgr, connectionId, schema, table, content!);
+            rowCount = await importJsonFromFile(
+              connMgr,
+              connectionId,
+              schema,
+              table,
+              filePath,
+              jsonParseMax
+            );
             break;
           case 'SQL':
             rowCount = await importSql(connMgr, connectionId, filePath, progress);
@@ -327,34 +346,6 @@ function buildCreateTable(schema: string, table: string, columns: ColumnInfo[]):
   return `CREATE TABLE "${schema}"."${table}" (\n${colDefs.join(',\n')}\n);`;
 }
 
-async function importCsv(
-  connMgr: ConnectionManager,
-  connectionId: string,
-  schema: string,
-  table: string,
-  content: string
-): Promise<number> {
-  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const lines = normalized.split('\n').filter(l => l.trim());
-  if (lines.length < 2) { return 0; }
-
-  const headers = parseCsvLine(lines[0]).map(stripCsvBom).map(trimHeaderName);
-  let count = 0;
-
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCsvLine(lines[i]);
-    if (values.length !== headers.length) { continue; }
-    const row: Record<string, unknown> = {};
-    headers.forEach((h, idx) => {
-      const v = values[idx];
-      row[h] = v === '' || v === undefined ? null : v;
-    });
-    await connMgr.insertRow(connectionId, schema, table, row);
-    count++;
-  }
-  return count;
-}
-
 /** Remove CR and trim so Windows CRLF / stray \\r in cells do not break column names. */
 function stripCarriageReturns(s: string): string {
   return s.replace(/\r/g, '');
@@ -391,21 +382,6 @@ function parseCsvLine(line: string): string[] {
   }
   result.push(stripCarriageReturns(current));
   return result;
-}
-
-async function importJson(
-  connMgr: ConnectionManager,
-  connectionId: string,
-  schema: string,
-  table: string,
-  content: string
-): Promise<number> {
-  const data = JSON.parse(content) as unknown;
-  const rows = Array.isArray(data) ? data : [data];
-  for (const row of rows as Record<string, unknown>[]) {
-    await connMgr.insertRow(connectionId, schema, table, row);
-  }
-  return rows.length;
 }
 
 async function importSql(

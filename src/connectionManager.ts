@@ -1,155 +1,6 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import { Pool, PoolClient, QueryResult } from 'pg';
-
-/** Same line endings as import paths that read whole files. */
-function normalizeSqlChunk(s: string): string {
-  return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-/**
- * EOF tail: same semantics as loading the whole file and splitting (executeScriptBatched).
- * Semicolons inside string literals are not handled (same limitation as string-based import).
- */
-function splitSqlRemainder(buffer: string): string[] {
-  const trimmed = buffer.trim();
-  if (!trimmed.length) {
-    return [];
-  }
-  return trimmed
-    .split(/;\s*\n|;\s*$/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
-}
-
-/** Take statements terminated by `;` + newline; keep incomplete tail in `rest`. */
-function extractStatementsFromBuffer(buffer: string): { statements: string[]; rest: string } {
-  const statements: string[] = [];
-  const re = /;\s*\n/g;
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(buffer)) !== null) {
-    const stmt = buffer.slice(lastIndex, m.index).trim();
-    lastIndex = m.index + m[0].length;
-    if (stmt.length) {
-      statements.push(stmt);
-    }
-  }
-  return { statements, rest: buffer.slice(lastIndex) };
-}
-
-/** Scan one `(...)` tuple starting at `start`; respects single-quoted strings (PostgreSQL `''` escape). */
-function readBalancedParenTuple(s: string, start: number): { text: string; endIndex: number } | null {
-  if (start >= s.length || s[start] !== '(') {
-    return null;
-  }
-  let depth = 0;
-  let i = start;
-  let inQuote = false;
-  while (i < s.length) {
-    const c = s[i];
-    if (inQuote) {
-      if (c === "'" && i + 1 < s.length && s[i + 1] === "'") {
-        i += 2;
-        continue;
-      }
-      if (c === "'") {
-        inQuote = false;
-      }
-      i++;
-      continue;
-    }
-    if (c === "'") {
-      inQuote = true;
-      i++;
-      continue;
-    }
-    if (c === '(') {
-      depth++;
-    } else if (c === ')') {
-      depth--;
-      if (depth === 0) {
-        return { text: s.slice(start, i + 1), endIndex: i + 1 };
-      }
-    }
-    i++;
-  }
-  return null;
-}
-
-/**
- * After the `VALUES` keyword: comma-separated parenthesized tuples, then optional
- * `ON CONFLICT` / `RETURNING` / trailing `;`.
- */
-function parseInsertValuesTupleList(s: string): { tuples: string[]; rest: string } | null {
-  let i = 0;
-  while (i < s.length && /\s/.test(s[i])) {
-    i++;
-  }
-  if (i >= s.length || s[i] !== '(') {
-    return null;
-  }
-  const tuples: string[] = [];
-  while (i < s.length) {
-    const t = readBalancedParenTuple(s, i);
-    if (!t) {
-      return null;
-    }
-    tuples.push(t.text);
-    i = t.endIndex;
-    while (i < s.length && /\s/.test(s[i])) {
-      i++;
-    }
-    if (i < s.length && s[i] === ',') {
-      i++;
-      continue;
-    }
-    break;
-  }
-  return { tuples, rest: s.slice(i) };
-}
-
-/**
- * Split `INSERT INTO ... VALUES (a), (b), ... [suffix]` into one INSERT per row.
- * Other statements are returned unchanged. Single-quoted literals only (same class of caveats as `;` splitting).
- */
-function splitInsertMultiValuesToSingleStatements(statement: string): string[] {
-  const trimmed = statement.trim();
-  if (!trimmed.length) {
-    return [statement];
-  }
-  const withoutSemi = trimmed.endsWith(';') ? trimmed.slice(0, -1).trimEnd() : trimmed;
-  if (!/^INSERT\s/i.test(withoutSemi) || !/\bVALUES\b/i.test(withoutSemi)) {
-    return [statement];
-  }
-  const valuesMatch = /\bVALUES\b/i.exec(withoutSemi);
-  if (!valuesMatch) {
-    return [statement];
-  }
-  const valuesIdx = valuesMatch.index!;
-  const before = withoutSemi.slice(0, valuesIdx).trimEnd();
-  const afterValues = withoutSemi.slice(valuesIdx + valuesMatch[0].length).trimStart();
-  const parsed = parseInsertValuesTupleList(afterValues);
-  if (!parsed || parsed.tuples.length <= 1) {
-    return [statement];
-  }
-  const { tuples, rest } = parsed;
-  const restTrim = rest.trimStart();
-  const restClean = restTrim.replace(/;+\s*$/, '').trim();
-  if (restClean.length > 0) {
-    const ru = restClean.toUpperCase();
-    if (!ru.startsWith('ON CONFLICT') && !ru.startsWith('RETURNING')) {
-      return [statement];
-    }
-  }
-  const suffixPart = restClean.length > 0 ? ` ${restClean}` : '';
-  return tuples.map(t => `${before} VALUES ${t}${suffixPart};`);
-}
-
-function expandInsertValuesForExecution(sql: string): string[] {
-  const expanded = splitInsertMultiValuesToSingleStatements(sql);
-  return expanded.length > 0 ? expanded : [sql];
-}
+import { iterExpandInsertStatements } from './sqlStatementSplit.js';
 
 interface PgColRow {
   col: string;
@@ -654,84 +505,45 @@ export class ConnectionManager {
       .split(/;\s*\n|;\s*$/)
       .map(s => s.trim())
       .filter(s => s.length > 0);
-    const statements = rawStatements.flatMap(s => expandInsertValuesForExecution(s));
 
-    const total = statements.length;
-    let rowsAffected = 0;
-    let executed = 0;
-
-    for (let i = 0; i < statements.length; i += batchSize) {
-      const end = Math.min(i + batchSize, statements.length);
-      for (let j = i; j < end; j++) {
-        const result = await this.query(connectionId, statements[j]);
-        const rc = result.rowCount;
-        if (typeof rc === 'number' && rc > 0) {
-          rowsAffected += rc;
-        }
-        executed++;
+    let total = 0;
+    for (const s of rawStatements) {
+      for (const _ of iterExpandInsertStatements(s)) {
+        total++;
       }
-      options?.onProgress?.(executed, total);
-      await new Promise<void>(resolve => setImmediate(resolve));
     }
 
-    return { statementsExecuted: executed, rowsAffected };
-  }
-
-  /**
-   * Stream a large .sql file from disk: bounded RAM (chunk buffer + one statement tail),
-   * same statement boundaries as {@link executeScriptBatched} (`;` + newline / EOF rules).
-   * Multi-row INSERT VALUES lists are split into one INSERT per row when executed.
-   */
-  async executeScriptBatchedFromFile(
-    connectionId: string,
-    filePath: string,
-    options?: { onProgress?: (executed: number) => void }
-  ): Promise<{ statementsExecuted: number; rowsAffected: number }> {
-    const batchSize = vscode.workspace.getConfiguration('dbManager').get<number>('sqlImportBatchSize', 100);
-    let buffer = '';
     let rowsAffected = 0;
     let executed = 0;
 
-    const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 });
-
-    const runStatement = async (sql: string) => {
-      const parts = expandInsertValuesForExecution(sql);
-      for (const q of parts) {
+    for (const stmt of rawStatements) {
+      for (const q of iterExpandInsertStatements(stmt)) {
         const result = await this.query(connectionId, q);
         const rc = result.rowCount;
         if (typeof rc === 'number' && rc > 0) {
           rowsAffected += rc;
         }
         executed++;
-      }
-    };
-
-    const runInBatches = async (statements: string[]) => {
-      for (let i = 0; i < statements.length; i += batchSize) {
-        const end = Math.min(i + batchSize, statements.length);
-        for (let j = i; j < end; j++) {
-          await runStatement(statements[j]);
+        if (executed % batchSize === 0 || executed === total) {
+          options?.onProgress?.(executed, total);
+          await new Promise<void>(resolve => setImmediate(resolve));
         }
-        options?.onProgress?.(executed);
-        await new Promise<void>(resolve => setImmediate(resolve));
-      }
-    };
-
-    for await (const chunk of stream) {
-      buffer += normalizeSqlChunk(chunk as string);
-      const { statements, rest } = extractStatementsFromBuffer(buffer);
-      buffer = rest;
-      if (statements.length > 0) {
-        await runInBatches(statements);
       }
     }
-
-    const tailStatements = splitSqlRemainder(buffer);
-    if (tailStatements.length > 0) {
-      await runInBatches(tailStatements);
-    }
-
     return { statementsExecuted: executed, rowsAffected };
+  }
+
+  /**
+   * Line-oriented SQL file import (readline): does not load the whole file into one string.
+   * Multi-row INSERT VALUES is expanded per tuple without allocating all rows at once.
+   */
+  async executeScriptBatchedFromFile(
+    connectionId: string,
+    filePath: string,
+    options?: { onProgress?: (executed: number) => void }
+  ): Promise<{ statementsExecuted: number; rowsAffected: number }> {
+    const { importSqlFileStreaming } = await import('./streamingImport.js');
+    return importSqlFileStreaming(this, connectionId, filePath, options);
   }
 
   private async closePool(id: string): Promise<void> {
