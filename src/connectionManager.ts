@@ -38,6 +38,119 @@ function extractStatementsFromBuffer(buffer: string): { statements: string[]; re
   return { statements, rest: buffer.slice(lastIndex) };
 }
 
+/** Scan one `(...)` tuple starting at `start`; respects single-quoted strings (PostgreSQL `''` escape). */
+function readBalancedParenTuple(s: string, start: number): { text: string; endIndex: number } | null {
+  if (start >= s.length || s[start] !== '(') {
+    return null;
+  }
+  let depth = 0;
+  let i = start;
+  let inQuote = false;
+  while (i < s.length) {
+    const c = s[i];
+    if (inQuote) {
+      if (c === "'" && i + 1 < s.length && s[i + 1] === "'") {
+        i += 2;
+        continue;
+      }
+      if (c === "'") {
+        inQuote = false;
+      }
+      i++;
+      continue;
+    }
+    if (c === "'") {
+      inQuote = true;
+      i++;
+      continue;
+    }
+    if (c === '(') {
+      depth++;
+    } else if (c === ')') {
+      depth--;
+      if (depth === 0) {
+        return { text: s.slice(start, i + 1), endIndex: i + 1 };
+      }
+    }
+    i++;
+  }
+  return null;
+}
+
+/**
+ * After the `VALUES` keyword: comma-separated parenthesized tuples, then optional
+ * `ON CONFLICT` / `RETURNING` / trailing `;`.
+ */
+function parseInsertValuesTupleList(s: string): { tuples: string[]; rest: string } | null {
+  let i = 0;
+  while (i < s.length && /\s/.test(s[i])) {
+    i++;
+  }
+  if (i >= s.length || s[i] !== '(') {
+    return null;
+  }
+  const tuples: string[] = [];
+  while (i < s.length) {
+    const t = readBalancedParenTuple(s, i);
+    if (!t) {
+      return null;
+    }
+    tuples.push(t.text);
+    i = t.endIndex;
+    while (i < s.length && /\s/.test(s[i])) {
+      i++;
+    }
+    if (i < s.length && s[i] === ',') {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return { tuples, rest: s.slice(i) };
+}
+
+/**
+ * Split `INSERT INTO ... VALUES (a), (b), ... [suffix]` into one INSERT per row.
+ * Other statements are returned unchanged. Single-quoted literals only (same class of caveats as `;` splitting).
+ */
+function splitInsertMultiValuesToSingleStatements(statement: string): string[] {
+  const trimmed = statement.trim();
+  if (!trimmed.length) {
+    return [statement];
+  }
+  const withoutSemi = trimmed.endsWith(';') ? trimmed.slice(0, -1).trimEnd() : trimmed;
+  if (!/^INSERT\s/i.test(withoutSemi) || !/\bVALUES\b/i.test(withoutSemi)) {
+    return [statement];
+  }
+  const valuesMatch = /\bVALUES\b/i.exec(withoutSemi);
+  if (!valuesMatch) {
+    return [statement];
+  }
+  const valuesIdx = valuesMatch.index!;
+  const before = withoutSemi.slice(0, valuesIdx).trimEnd();
+  const afterValues = withoutSemi.slice(valuesIdx + valuesMatch[0].length).trimStart();
+  const parsed = parseInsertValuesTupleList(afterValues);
+  if (!parsed || parsed.tuples.length <= 1) {
+    return [statement];
+  }
+  const { tuples, rest } = parsed;
+  const restTrim = rest.trimStart();
+  const restClean = restTrim.replace(/;+\s*$/, '').trim();
+  if (restClean.length > 0) {
+    const ru = restClean.toUpperCase();
+    if (!ru.startsWith('ON CONFLICT') && !ru.startsWith('RETURNING')) {
+      return [statement];
+    }
+  }
+  const suffixPart = restClean.length > 0 ? ` ${restClean}` : '';
+  return tuples.map(t => `${before} VALUES ${t}${suffixPart};`);
+}
+
+function expandInsertValuesForExecution(sql: string): string[] {
+  const expanded = splitInsertMultiValuesToSingleStatements(sql);
+  return expanded.length > 0 ? expanded : [sql];
+}
+
 interface PgColRow {
   col: string;
   typ: string;
@@ -527,6 +640,7 @@ export class ConnectionManager {
 
   /**
    * Run many statements in batches (same split as executeScript — `;` outside strings is not handled).
+   * Multi-row `INSERT ... VALUES (a), (b)` is expanded to one INSERT per tuple before execution.
    * Each statement uses `query()` (short-lived connection, `statement_timeout` applied) so long imports
    * do not keep a single TCP session open for the whole file — avoids "Connection terminated unexpectedly".
    */
@@ -536,10 +650,11 @@ export class ConnectionManager {
     options?: { onProgress?: (executed: number, total: number) => void }
   ): Promise<{ statementsExecuted: number; rowsAffected: number }> {
     const batchSize = vscode.workspace.getConfiguration('dbManager').get<number>('sqlImportBatchSize', 100);
-    const statements = sql
+    const rawStatements = sql
       .split(/;\s*\n|;\s*$/)
       .map(s => s.trim())
       .filter(s => s.length > 0);
+    const statements = rawStatements.flatMap(s => expandInsertValuesForExecution(s));
 
     const total = statements.length;
     let rowsAffected = 0;
@@ -565,6 +680,7 @@ export class ConnectionManager {
   /**
    * Stream a large .sql file from disk: bounded RAM (chunk buffer + one statement tail),
    * same statement boundaries as {@link executeScriptBatched} (`;` + newline / EOF rules).
+   * Multi-row INSERT VALUES lists are split into one INSERT per row when executed.
    */
   async executeScriptBatchedFromFile(
     connectionId: string,
@@ -579,12 +695,15 @@ export class ConnectionManager {
     const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 });
 
     const runStatement = async (sql: string) => {
-      const result = await this.query(connectionId, sql);
-      const rc = result.rowCount;
-      if (typeof rc === 'number' && rc > 0) {
-        rowsAffected += rc;
+      const parts = expandInsertValuesForExecution(sql);
+      for (const q of parts) {
+        const result = await this.query(connectionId, q);
+        const rc = result.rowCount;
+        if (typeof rc === 'number' && rc > 0) {
+          rowsAffected += rc;
+        }
+        executed++;
       }
-      executed++;
     };
 
     const runInBatches = async (statements: string[]) => {

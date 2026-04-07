@@ -287,6 +287,7 @@ function csvEscape(value: string): string {
   return value;
 }
 
+/** One INSERT per row so imports run row-by-row (streaming-friendly `;\\n` boundaries). */
 function rowsToInsertSql(
   schema: string,
   table: string,
@@ -295,11 +296,11 @@ function rowsToInsertSql(
 ): string {
   if (rows.length === 0) { return ''; }
   const cols = columns.map(c => `"${c.name}"`).join(', ');
-  const valLines = rows.map(row => {
+  const lines = rows.map(row => {
     const vals = columns.map(c => sqlValue(row[c.name])).join(', ');
-    return `  (${vals})`;
+    return `INSERT INTO "${schema}"."${table}" (${cols}) VALUES (${vals});`;
   });
-  return `INSERT INTO "${schema}"."${table}" (${cols}) VALUES\n${valLines.join(',\n')};`;
+  return lines.join('\n');
 }
 
 function sqlValue(val: unknown): string {
